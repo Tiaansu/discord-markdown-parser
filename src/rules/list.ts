@@ -1,108 +1,170 @@
-/**
- * A copy of SimpleMarkdown's list rule, but with modifications to match Discord's list behavior.
- * Only matches `*`, `-`, `{number}.` as list markers.
- * Breaks out of lists if there are 2+ newlines, and requires indentation for continuation.
- */
-
-import SimpleMarkdown, { type ParserRule } from '@khanacademy/simple-markdown';
-import { extend } from '../utils/extend';
-
-// Only match *, -, or numbered lists (no + like standard markdown)
 const LIST_BULLET = '(?:[*-]|\\d+\\.)';
-
-// Recognize the start of a list item with any amount of leading space
 const LIST_ITEM_PREFIX = '( *)(' + LIST_BULLET + ')( +)';
 const LIST_ITEM_PREFIX_R = new RegExp('^' + LIST_ITEM_PREFIX);
-
-// Main list regex - matches entire list block
-const LIST_R = new RegExp(
-    '^( *)(' +
-        LIST_BULLET +
-        ')( +)' +
-        '[^\\n]*(?:\\n' +
-        '(?!\\n)' + // No double newlines (would break the list)
-        '(?:(?!\\1' +
-        LIST_BULLET +
-        ' )(?= )[^\\n]*|' + // Continuation with indent, or
-        '\\1' +
-        LIST_BULLET +
-        ' [^\\n]*))*', // New list item at same level
-    ''
-);
-
 const LIST_LOOKBEHIND_R = /(?:^|\n)( *)$/;
+
+import SimpleMarkdown, {
+    SingleASTNode,
+    type ParserRule,
+} from '@khanacademy/simple-markdown';
+
+export const extend = (
+    additionalRules: Partial<ParserRule>,
+    defaultRule: ParserRule
+): ParserRule => {
+    return Object.assign({}, defaultRule, additionalRules);
+};
 
 export const list: ParserRule = extend(
     {
         match: (source, state) => {
-            const prevCaptureStr =
-                state.prevCapture == null ? '' : state.prevCapture[0];
+            if ((state._listDepth ?? 0) >= 10) return null;
+
+            const prevCaptureStr = state.prevCapture?.[0] ?? '';
             const isStartOfLineCapture = LIST_LOOKBEHIND_R.exec(prevCaptureStr);
             if (!isStartOfLineCapture) return null;
 
-            const modifiedSource = isStartOfLineCapture[1] + source;
-            const match = LIST_R.exec(modifiedSource);
+            const matches: string[] = [];
+            const lines = source.split('\n');
 
-            if (!match) return null;
+            let i = 0;
+            let sawItem = false;
+            let blankLineCount = 0;
 
-            // Additional check: if malformed continuation, reject
-            const lines = match[0].split('\n');
-            for (let i = 1; i < lines.length; i++) {
-                if (lines[i].trim() === '') {
-                    if (
-                        i + 1 < lines.length &&
-                        lines[i + 1].trim() !== '' &&
-                        !lines[i + 1].match(/^ /)
-                    ) {
-                        return null;
-                    }
+            while (i < lines.length) {
+                const line = lines[i];
+
+                if (LIST_ITEM_PREFIX_R.test(line)) {
+                    matches.push(line);
+                    i++;
+                    sawItem = true;
+                    blankLineCount = 0;
+                    continue;
+                }
+
+                if (line.trim() === '') {
+                    if (!sawItem) break; // don't start with blanks
+                    if (blankLineCount >= 1) break; // stop on second blank
+                    matches.push(line);
+                    blankLineCount++;
+                    i++;
+                    continue;
+                }
+
+                if (sawItem) {
+                    matches.push(line); // likely indented multiline item
+                    i++;
+                } else {
+                    break; // non-list content before any list item
                 }
             }
 
-            return match;
+            if (matches.length === 0) return null;
+            return [matches.join('\n')];
         },
 
         parse: (capture, parse, state) => {
-            const bullet = capture[2];
-            const ordered = bullet.length > 1;
-            const start = ordered ? +bullet.slice(0, -1) : 1;
-            const indent = capture[1].length;
+            const lines = capture[0].replace(/\n+$/, '').split('\n');
 
-            const items = [];
-            const rawItems = capture[0].split(
-                new RegExp(
-                    '\\n(?=( {' + indent + '})(?:' + LIST_BULLET + ') )',
-                    'g'
-                )
-            );
+            type ItemBlock = {
+                indent: number;
+                raw: string[];
+            };
 
-            for (let i = 0; i < rawItems.length; i++) {
-                let item = rawItems[i];
+            const blocks: ItemBlock[] = [];
 
-                const lines = item.split('\n');
-
-                // Strip list marker on first line, and base indent
-                lines[0] = lines[0]
-                    .replace(LIST_ITEM_PREFIX_R, '')
-                    .slice(indent);
-
-                // Strip base indent from continuation lines only
-                for (let j = 1; j < lines.length; j++) {
-                    lines[j] = lines[j].startsWith(' '.repeat(indent))
-                        ? lines[j].slice(indent)
-                        : lines[j];
+            for (let i = 0; i < lines.length; ) {
+                const match = LIST_ITEM_PREFIX_R.exec(lines[i]);
+                if (!match) {
+                    i++;
+                    continue;
                 }
 
-                item = lines.join('\n').replace(/^\n+|\n+$/g, '');
-                if (item.length === 0) continue;
+                const indent = match[1].length;
+                const block: ItemBlock = { indent, raw: [lines[i++]] };
 
-                items.push(parse(item, { ...state, _list: true }));
+                while (
+                    i < lines.length &&
+                    (!LIST_ITEM_PREFIX_R.test(lines[i]) ||
+                        LIST_ITEM_PREFIX_R.exec(lines[i])![1].length > indent)
+                ) {
+                    block.raw.push(lines[i++]);
+                }
+
+                blocks.push(block);
             }
 
+            const maxDepth = 10;
+            const currentDepth = (state._listDepth ?? 0) + 1;
+            const parsedItems: SingleASTNode[][] = [];
+
+            for (let i = 0; i < blocks.length; i++) {
+                const block = blocks[i];
+                const firstLine = block.raw[0]
+                    .replace(LIST_ITEM_PREFIX_R, '')
+                    .trim();
+                const rest = block.raw
+                    .slice(1)
+                    .map((l) => l.slice(block.indent + 2))
+                    .join('\n');
+                let full = [firstLine, rest].filter(Boolean).join('\n');
+
+                const nextState = {
+                    ...state,
+                    _list: true,
+                    _listDepth: currentDepth,
+                };
+
+                if (currentDepth < maxDepth) {
+                    parsedItems.push(parse(full, nextState));
+                    continue;
+                }
+
+                if (currentDepth === maxDepth) {
+                    // Check if the content would create deeper nesting
+                    // by looking for nested list items in the full content
+                    const lines = full.split('\n');
+                    const contentItems = [firstLine];
+
+                    // Look for any nested list items in the rest content
+                    for (const line of lines.slice(1)) {
+                        if (LIST_ITEM_PREFIX_R.test(line)) {
+                            const nestedContent = line
+                                .replace(LIST_ITEM_PREFIX_R, '')
+                                .trim();
+                            if (nestedContent) {
+                                contentItems.push(nestedContent);
+                            }
+                        }
+                    }
+
+                    // Create flattened content
+                    const flattenedContent = contentItems.join('- ');
+
+                    // Parse just the flattened content as plain text
+                    parsedItems.push([
+                        {
+                            type: 'text',
+                            content: flattenedContent,
+                        },
+                    ]);
+                    continue;
+                }
+
+                // This shouldn't be reached but keeping as fallback
+                break;
+            }
+
+            const firstBullet = LIST_ITEM_PREFIX_R.exec(lines[0])?.[2] ?? '*';
+            const ordered = /^\d+\.$/.test(firstBullet);
+            const start = ordered ? parseInt(firstBullet, 10) : 1;
+
             return {
+                type: 'list',
                 ordered,
                 start,
-                items,
+                items: parsedItems,
+                depth: currentDepth,
             };
         },
     },

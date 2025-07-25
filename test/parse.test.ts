@@ -699,6 +699,7 @@ describe('Parse', () => {
                 type: 'list',
                 ordered: true,
                 start: 1,
+                depth: 1,
                 items: [
                     [
                         {
@@ -721,6 +722,7 @@ describe('Parse', () => {
                 type: 'list',
                 ordered: false,
                 start: 1,
+                depth: 1,
                 items: [
                     [
                         {
@@ -731,7 +733,7 @@ describe('Parse', () => {
                             type: 'br',
                         },
                         {
-                            content: '  World',
+                            content: 'World',
                             type: 'text',
                         },
                     ],
@@ -754,25 +756,26 @@ describe('Parse', () => {
                             type: 'br',
                         },
                         {
-                            content: '  Stuff',
+                            content: 'Stuff',
                             type: 'text',
                         },
                         {
                             type: 'br',
                         },
                         {
-                            content: '    ',
+                            content: '  ',
                             type: 'text',
                         },
                         {
                             type: 'br',
                         },
                         {
-                            content: '    Yay',
+                            content: '  Yay',
                             type: 'text',
                         },
                     ],
                 ],
+                depth: 1,
             },
         ]);
     });
