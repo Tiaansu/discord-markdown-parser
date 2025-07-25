@@ -1,5 +1,5 @@
 {
-    "name": "@tiaansu/discord-markdown-parser",
+    "name": "@tiaansu-dev/discord-markdown-parser",
     "type": "module",
     "version": "1.0.0",
     "main": "./dist/index.cjs",
@@ -41,5 +41,8 @@
     },
     "dependencies": {
         "@khanacademy/simple-markdown": "^2.1.0"
+    },
+    "publishConfig": {
+        "access": "public"
     }
 }
