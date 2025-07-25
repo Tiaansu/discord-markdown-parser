@@ -78,7 +78,7 @@ export default parse;
 
 // some types
 export type RuleTypes = keyof typeof rules;
-export type RuleTypeExtended = keyof typeof rulesExtended;
+export type RuleTypesExtended = keyof typeof rulesExtended;
 
 export { SingleASTNode };
 export type ASTNode = Array<SingleASTNode>;
